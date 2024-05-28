@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify, make_response, render_template, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 import uuid
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -8,7 +8,7 @@ from functools import wraps
 import os
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your secret key'
+app.config['SECRET_KEY'] = 'your_secret_key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///Database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -29,75 +29,77 @@ class TokenBlacklist(db.Model):
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = None
-        if 'x-access-token' in request.headers:
-            token = request.headers['x-access-token']
+        token = request.cookies.get('x-access-token')
         if not token:
-            return jsonify({'message': 'Token is missing !!'}), 401
+            return redirect(url_for('login'))
 
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
             blacklisted_token = TokenBlacklist.query.filter_by(token=token).first()
             if blacklisted_token:
-                return jsonify({'message': 'Token has been blacklisted !!'}), 401
+                return redirect(url_for('login'))
+
             current_user = User.query.filter_by(public_id=data['public_id']).first()
         except:
-            return jsonify({'message': 'Token is invalid !!'}), 401
+            return redirect(url_for('login'))
+
         return f(current_user, *args, **kwargs)
+
     return decorated
 
-@app.route('/user', methods=['GET'])
-@token_required
-def get_all_users(current_user):
-    users = User.query.all()
-    output = []
-    for user in users:
-        output.append({'public_id': user.public_id, 'name': user.name, 'email': user.email})
-    return jsonify({'users': output})
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-@app.route('/login', methods=['POST'])
+@app.route('/login', methods=['GET', 'POST'])
 def login():
-    auth = request.form
-    if not auth or not auth.get('email') or not auth.get('password'):
-        return make_response('Could not verify', 401, {'WWW-Authenticate': 'Basic realm ="Login required !!"'})
+    if request.method == 'POST':
+        auth = request.form
+        if not auth or not auth.get('email') or not auth.get('password'):
+            return make_response('Could not verify', 401, {'WWW-Authenticate': 'Basic realm ="Login required !!"'})
 
-    user = User.query.filter_by(email=auth.get('email')).first()
-    if not user:
-        return make_response('Could not verify', 401, {'WWW-Authenticate': 'Basic realm ="User does not exist !!"'})
+        user = User.query.filter_by(email=auth.get('email')).first()
+        if not user:
+            return make_response('Could not verify', 401, {'WWW-Authenticate': 'Basic realm ="User does not exist !!"'})
 
-    if check_password_hash(user.password, auth.get('password')):
-        token = jwt.encode({'public_id': user.public_id, 'exp': datetime.utcnow() + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm="HS256")
-        return make_response(jsonify({'token': token}), 201)
+        if check_password_hash(user.password, auth.get('password')):
+            token = jwt.encode({'public_id': user.public_id, 'exp': datetime.utcnow() + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm="HS256")
+            response = make_response(redirect(url_for('home')))
+            response.set_cookie('x-access-token', token)
+            return response
 
-    return make_response('Could not verify', 403, {'WWW-Authenticate': 'Basic realm ="Wrong Password !!"'})
+        return make_response('Could not verify', 403, {'WWW-Authenticate': 'Basic realm ="Wrong Password !!"'})
 
-@app.route('/signup', methods=['POST'])
+    return render_template('login.html')
+
+@app.route('/signup', methods=['GET', 'POST'])
 def signup():
-    data = request.form
-    name, email = data.get('name'), data.get('email')
-    password = data.get('password')
+    if request.method == 'POST':
+        data = request.form
+        name, email = data.get('name'), data.get('email')
+        password = data.get('password')
 
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        user = User(public_id=str(uuid.uuid4()), name=name, email=email, password=generate_password_hash(password))
-        db.session.add(user)
-        db.session.commit()
-        return make_response('Successfully registered.', 201)
-    else:
-        return make_response('User already exists. Please Log in.', 202)
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            user = User(public_id=str(uuid.uuid4()), name=name, email=email, password=generate_password_hash(password))
+            db.session.add(user)
+            db.session.commit()
+            return redirect(url_for('login'))
+        else:
+            return make_response('User already exists. Please Log in.', 202)
 
-@app.route('/logout', methods=['POST'])
+    return render_template('signup.html')
+
+@app.route('/home')
 @token_required
-def logout(current_user):
-    token = request.headers['x-access-token']
-    if not token:
-        return jsonify({'message': 'Token is missing !!'}), 401
+def home(current_user):
+    return render_template('home.html', user=current_user)
 
-    blacklisted_token = TokenBlacklist(token=token, blacklisted_on=datetime.utcnow())
-    db.session.add(blacklisted_token)
-    db.session.commit()
-
-    return jsonify({'message': 'Successfully logged out.'}), 200
+@app.route('/logout')
+def logout():
+    response = make_response(redirect(url_for('login')))
+    response.delete_cookie('x-access-token')
+    return response
 
 def create_database():
     if not os.path.exists('Database.db'):

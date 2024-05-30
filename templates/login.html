@@ -6,13 +6,29 @@
     <title>Login</title>
 </head>
 <body>
+    <!-- Login form -->
     <h1>Login</h1>
     <form action="/login" method="POST">
+        <!-- Email input -->
         <label for="email">Email:</label><br>
         <input type="email" id="email" name="email" required><br>
+        <!-- Password input -->
         <label for="password">Password:</label><br>
         <input type="password" id="password" name="password" required><br>
+        <!-- Submit button -->
         <button type="submit">Login</button>
     </form>
+    <!-- Link to sign up page -->
+    <p>Don't have an account? <a href="/signup">Sign up here</a>.</p>
+    <!-- Flash messages container -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <ul>
+                {% for category, message in messages %}
+                    <li class="{{ category }}">{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
 </body>
 </html>
